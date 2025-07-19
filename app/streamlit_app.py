@@ -1,25 +1,21 @@
 import sys
 import os
-sys.path.append(os.path.abspath("../src")) 
+sys.path.append(os.path.abspath("../src"))
 
 import streamlit as st
 import pandas as pd
 import joblib
 import shap
 import matplotlib.pyplot as plt
-from preprocessing import load_and_preprocess 
+from preprocessing import load_and_preprocess
 
 model = joblib.load("models/churn_model.pkl")
 metrics = joblib.load("models/metrics.pkl")
+feature_columns = joblib.load("models/feature_columns.pkl")
 
 st.set_page_config(page_title="Customer Churn Predictor", page_icon="📉")
-st.title("📉 Customer Churn Prediction")
+st.title("📉 Telco Customer Churn Prediction")
 st.markdown("Enter customer details below to predict **churn risk**:")
-
-st.sidebar.title("📊 Model Metrics")
-st.sidebar.metric("Accuracy", f"{metrics['accuracy']:.2%}")
-st.sidebar.metric("AUC", f"{metrics['roc_auc']:.2%}")
-st.sidebar.metric("F1 Score", f"{metrics['f1_score']:.2%}")
 
 gender = st.selectbox("Gender", ["Male", "Female"])
 senior = st.selectbox("Senior Citizen", ["No", "Yes"])
@@ -63,12 +59,13 @@ input_dict = {
     "PaymentMethod": [payment_method],
     "tenure": [tenure],
     "MonthlyCharges": [monthly_charges],
-    "TotalCharges": [total_charges]
+    "TotalCharges": [total_charges],
 }
 
 input_df = pd.DataFrame(input_dict)
 
 df_encoded = load_and_preprocess(None, custom_df=input_df)
+df_encoded = df_encoded.reindex(columns=feature_columns, fill_value=0)
 
 if st.button("Predict Churn"):
     pred = model.predict(df_encoded)[0]
@@ -83,10 +80,29 @@ if st.button("Predict Churn"):
     with st.expander("📊 See Model Input (Preprocessed)"):
         st.dataframe(df_encoded)
 
-    st.subheader("🔍 SHAP Feature Explanation")
-    explainer = shap.Explainer(model)
-    shap_values = explainer(df_encoded)
+    st.subheader("🔍 SHAP Feature Contributions")
+    try:
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(df_encoded)
 
-    fig, ax = plt.subplots(figsize=(10, 3))
-    shap.plots.waterfall(shap_values[0], max_display=10, show=False)
-    st.pyplot(fig)
+        if isinstance(shap_values, list):
+            shap_vals = shap_values[1][0]
+            expected_val = explainer.expected_value[1]
+        else:
+            shap_vals = shap_values[0]
+            expected_val = explainer.expected_value
+
+        shap.initjs()
+        fig = plt.figure(figsize=(10, 4))
+        shap.plots._waterfall.waterfall_legacy(
+            expected_val,
+            shap_vals,
+            df_encoded.iloc[0],
+            max_display=10,
+            show=False
+        )
+        st.pyplot(fig)
+
+    except Exception as e:
+        st.warning(f"⚠️ SHAP waterfall plot failed: {e}")
+
